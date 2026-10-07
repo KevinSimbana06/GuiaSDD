@@ -1,98 +1,327 @@
-import * as Device from 'expo-device';
-import { Platform, StyleSheet } from 'react-native';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  ActivityIndicator,
+  FlatList,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { AnimatedIcon } from '@/components/animated-icon';
-import { HintRow } from '@/components/hint-row';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { WebBadge } from '@/components/web-badge';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import { buildSubjectDraft } from '@/domain/materia';
+import { registerSubject } from '@/domain/registerSubject';
+import { loadSubjects, saveSubjects } from '@/storage/materiasStorage';
+import type { Subject } from '@/types/materia';
 
-function getDevMenuHint() {
-  if (Platform.OS === 'web') {
-    return <ThemedText type="small">use browser devtools</ThemedText>;
-  }
-  if (Device.isDevice) {
-    return (
-      <ThemedText type="small">
-        shake device or press <ThemedText type="code">m</ThemedText> in terminal
-      </ThemedText>
-    );
-  }
-  const shortcut = Platform.OS === 'android' ? 'cmd+m (or ctrl+m)' : 'cmd+d';
-  return (
-    <ThemedText type="small">
-      press <ThemedText type="code">{shortcut}</ThemedText>
-    </ThemedText>
-  );
-}
+const COLORS = {
+  background: '#e2e4e9',
+  card: '#FFFFFF',
+  header: '#001F3F',
+  primary: '#357ca5',
+  text: '#111111',
+  secondary: '#5a6e82',
+  border: '#b5bbc8',
+  error: '#d33724',
+};
 
 export default function HomeScreen() {
+  const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [name, setName] = useState('');
+  const [score, setScore] = useState('');
+  const [touched, setTouched] = useState({ name: false, score: false });
+  const [duplicateError, setDuplicateError] = useState<string>();
+  const [formError, setFormError] = useState<string>();
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+    loadSubjects()
+      .then((savedSubjects) => {
+        if (mounted) {
+          setSubjects(savedSubjects);
+        }
+      })
+      .catch((error: unknown) => {
+        console.error('No se pudieron cargar las materias.', error);
+      })
+      .finally(() => {
+        if (mounted) {
+          setIsLoading(false);
+        }
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const draft = useMemo(() => buildSubjectDraft(name, score), [name, score]);
+  const canSubmit = draft.valid && !isLoading;
+
+  async function handleSubmit() {
+    setTouched({ name: true, score: true });
+    setDuplicateError(undefined);
+    setFormError(undefined);
+
+    if (!draft.valid) {
+      return;
+    }
+
+    const result = await registerSubject(
+      subjects,
+      name,
+      score,
+      saveSubjects,
+      () => `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+
+    if (!result.ok) {
+      setDuplicateError(result.errors?.name);
+      setFormError(result.formError);
+      return;
+    }
+
+    setSubjects((current) => [...current, result.subject]);
+    setName('');
+    setScore('');
+    setTouched({ name: false, score: false });
+  }
+
   return (
-    <ThemedView style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
-        <ThemedView style={styles.heroSection}>
-          <AnimatedIcon />
-          <ThemedText type="title" style={styles.title}>
-            Welcome to&nbsp;Expo
-          </ThemedText>
-        </ThemedView>
+    <SafeAreaView style={styles.safeArea}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.container}
+      >
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Mis materias</Text>
+          <Text style={styles.headerSubtitle}>
+            Registra tu nota del primer bimestre
+          </Text>
+        </View>
 
-        <ThemedText type="code" style={styles.code}>
-          get started
-        </ThemedText>
+        <FlatList
+          data={subjects}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.content}
+          keyboardShouldPersistTaps="handled"
+          ListHeaderComponent={
+            <View style={styles.formCard}>
+              <Text style={styles.sectionTitle}>Registrar materia</Text>
 
-        <ThemedView type="backgroundElement" style={styles.stepContainer}>
-          <HintRow
-            title="Try editing"
-            hint={<ThemedText type="code">src/app/index.tsx</ThemedText>}
-          />
-          <HintRow title="Dev tools" hint={getDevMenuHint()} />
-          <HintRow
-            title="Fresh start"
-            hint={<ThemedText type="code">npm run reset-project</ThemedText>}
-          />
-        </ThemedView>
+              <Text style={styles.label}>Nombre de la materia</Text>
+              <TextInput
+                accessibilityLabel="Nombre de la materia"
+                value={name}
+                onChangeText={(value) => {
+                  setName(value);
+                  setDuplicateError(undefined);
+                  setFormError(undefined);
+                }}
+                onBlur={() => setTouched((current) => ({ ...current, name: true }))}
+                placeholder="Ej. Cálculo"
+                placeholderTextColor={COLORS.secondary}
+                style={styles.input}
+                maxLength={120}
+                returnKeyType="next"
+              />
+              {touched.name && (draft.errors.name || duplicateError) ? (
+                <Text style={styles.errorText}>
+                  {draft.errors.name || duplicateError}
+                </Text>
+              ) : null}
 
-        {Platform.OS === 'web' && <WebBadge />}
-      </SafeAreaView>
-    </ThemedView>
+              <Text style={styles.label}>Nota del primer bimestre</Text>
+              <TextInput
+                accessibilityLabel="Nota del primer bimestre"
+                value={score}
+                onChangeText={(value) => {
+                  setScore(value);
+                  setFormError(undefined);
+                }}
+                onBlur={() =>
+                  setTouched((current) => ({ ...current, score: true }))
+                }
+                placeholder="0.00 a 20.00"
+                placeholderTextColor={COLORS.secondary}
+                style={styles.input}
+                keyboardType="decimal-pad"
+                inputMode="decimal"
+                maxLength={20}
+                returnKeyType="done"
+              />
+              {touched.score && draft.errors.score ? (
+                <Text style={styles.errorText}>{draft.errors.score}</Text>
+              ) : null}
+
+              {formError ? (
+                <Text style={styles.errorText} accessibilityLiveRegion="polite">
+                  {formError}
+                </Text>
+              ) : null}
+
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Guardar materia"
+                accessibilityState={{ disabled: !canSubmit }}
+                disabled={!canSubmit}
+                onPress={handleSubmit}
+                style={({ pressed }) => [
+                  styles.button,
+                  !canSubmit && styles.buttonDisabled,
+                  pressed && canSubmit && styles.buttonPressed,
+                ]}
+              >
+                <Text style={styles.buttonText}>Guardar materia</Text>
+              </Pressable>
+            </View>
+          }
+          renderItem={({ item }) => (
+            <View style={styles.subjectCard}>
+              <View style={styles.subjectCopy}>
+                <Text style={styles.subjectName}>{item.name}</Text>
+                <Text style={styles.subjectLabel}>Primer bimestre</Text>
+              </View>
+              <Text style={styles.subjectScore}>{item.firstBim.toFixed(2)}</Text>
+            </View>
+          )}
+          ListEmptyComponent={
+            isLoading ? (
+              <ActivityIndicator
+                accessibilityLabel="Cargando materias"
+                color={COLORS.primary}
+                style={styles.loader}
+              />
+            ) : (
+              <Text style={styles.emptyText}>
+                Todavía no tienes materias registradas.
+              </Text>
+            )
+          }
+        />
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'center',
-    flexDirection: 'row',
-  },
   safeArea: {
     flex: 1,
-    paddingHorizontal: Spacing.four,
-    alignItems: 'center',
-    gap: Spacing.three,
-    paddingBottom: BottomTabInset + Spacing.three,
-    maxWidth: MaxContentWidth,
+    backgroundColor: COLORS.background,
   },
-  heroSection: {
-    alignItems: 'center',
-    justifyContent: 'center',
+  container: {
     flex: 1,
-    paddingHorizontal: Spacing.four,
-    gap: Spacing.four,
   },
-  title: {
+  header: {
+    backgroundColor: COLORS.header,
+    paddingHorizontal: 24,
+    paddingVertical: 20,
+  },
+  headerTitle: {
+    color: '#FFFFFF',
+    fontSize: 24,
+    fontWeight: '700',
+  },
+  headerSubtitle: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    marginTop: 4,
+  },
+  content: {
+    padding: 16,
+    gap: 12,
+  },
+  formCard: {
+    backgroundColor: COLORS.card,
+    borderRadius: 12,
+    padding: 20,
+  },
+  sectionTitle: {
+    color: COLORS.text,
+    fontSize: 20,
+    fontWeight: '700',
+    marginBottom: 16,
+  },
+  label: {
+    color: COLORS.text,
+    fontSize: 15,
+    fontWeight: '600',
+    marginBottom: 8,
+    marginTop: 12,
+  },
+  input: {
+    minHeight: 48,
+    borderColor: COLORS.border,
+    borderRadius: 8,
+    borderWidth: 1,
+    color: COLORS.text,
+    fontSize: 16,
+    paddingHorizontal: 14,
+  },
+  errorText: {
+    color: COLORS.error,
+    fontSize: 14,
+    marginTop: 6,
+  },
+  button: {
+    alignItems: 'center',
+    backgroundColor: COLORS.primary,
+    borderRadius: 8,
+    justifyContent: 'center',
+    minHeight: 48,
+    marginTop: 20,
+  },
+  buttonDisabled: {
+    backgroundColor: COLORS.border,
+  },
+  buttonPressed: {
+    opacity: 0.8,
+  },
+  buttonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  subjectCard: {
+    alignItems: 'center',
+    backgroundColor: COLORS.card,
+    borderRadius: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    minHeight: 76,
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+  },
+  subjectCopy: {
+    flex: 1,
+  },
+  subjectName: {
+    color: COLORS.text,
+    fontSize: 17,
+    fontWeight: '700',
+  },
+  subjectLabel: {
+    color: COLORS.secondary,
+    fontSize: 13,
+    marginTop: 4,
+  },
+  subjectScore: {
+    color: COLORS.text,
+    fontSize: 20,
+    fontWeight: '700',
+    marginLeft: 16,
+  },
+  emptyText: {
+    color: COLORS.secondary,
+    fontSize: 15,
     textAlign: 'center',
+    paddingVertical: 20,
   },
-  code: {
-    textTransform: 'uppercase',
-  },
-  stepContainer: {
-    gap: Spacing.three,
-    alignSelf: 'stretch',
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.four,
-    borderRadius: Spacing.four,
+  loader: {
+    paddingVertical: 20,
   },
 });
